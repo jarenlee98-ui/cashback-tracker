@@ -46,6 +46,7 @@ accent = ACCENTS[active_tab]
 
 
 def format_display_date(d_val) -> str:
+    """Formats date as DD/MMM/YYYY (e.g. 15/Sep/2026)."""
     if isinstance(d_val, str):
         try:
             d_val = date.fromisoformat(d_val.split("T")[0])
@@ -84,6 +85,7 @@ st.markdown(
     .cat-sub-row {{ display:flex; justify-content:space-between; font-size:12px; color:#8A8F98; }}
     .badge {{ font-size:10px; font-weight:700; padding:2px 7px; border-radius:999px; color:white; }}
 
+    /* Outline buttons for action icons */
     div[class*="st-key-prev_"] button,
     div[class*="st-key-next_"] button,
     div[class*="st-key-del_"] button,
@@ -103,6 +105,7 @@ st.markdown(
         color: {accent} !important;
     }}
 
+    /* Outlined bottom Add Transaction button */
     .st-key-bottom_bar {{
         position: fixed; left:50%; transform: translateX(-50%);
         bottom: 0; width: 100%; max-width: 480px;
@@ -125,6 +128,7 @@ st.markdown(
         color: white !important;
     }}
 
+    /* Outlined Dialog buttons */
     div[data-testid="stDialog"] button[kind="primary"] {{
         border: 2px solid {accent} !important;
         background: {accent} !important;
@@ -409,12 +413,28 @@ def render_card_panel(card_id: str, transactions: list[dict]):
         st.markdown(rows, unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
+    # transactions list with per-card user toggle
     st.markdown('<div class="card">', unsafe_allow_html=True)
-    st.markdown(f'<div style="font-weight:600;font-size:15px;margin-bottom:4px;">Transactions <span style="color:#8A8F98;">({len(in_period)})</span></div>', unsafe_allow_html=True)
-    if not in_period:
-        st.caption("No transactions in this period yet.")
+
+    filter_user = st.pills(
+        "Filter by user",
+        options=["All"] + USERS,
+        default="All",
+        key=f"user_filter_{card_id}",
+        label_visibility="collapsed",
+    )
+
+    filtered_txns = [t for t in in_period if filter_user == "All" or t.get("user") == filter_user]
+
+    st.markdown(
+        f'<div style="font-weight:600;font-size:15px;margin-top:6px;margin-bottom:4px;">Transactions <span style="color:#8A8F98;">({len(filtered_txns)})</span></div>',
+        unsafe_allow_html=True,
+    )
+
+    if not filtered_txns:
+        st.caption(f"No transactions found for {filter_user if filter_user != 'All' else 'this period'}.")
     else:
-        for t in in_period:
+        for t in filtered_txns:
             weekend = is_weekend(t["date"])
             u_color = USER_COLORS.get(t["user"], "#888")
             remark_txt = f" · {t['remark']}" if t.get("remark") else ""
