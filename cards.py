@@ -26,7 +26,6 @@ class CardInfo:
     categories: list[CategoryConfig]
 
 
-# --- Card Configurations ---
 CARD_CONFIG: dict[str, CardInfo] = {
     "UOB_ONE": CardInfo(
         id="UOB_ONE",
@@ -74,7 +73,6 @@ USER_COLORS: dict[str, str] = {
 }
 
 
-# --- Helpers ---
 def to_key(d: date | str) -> str:
     if isinstance(d, str):
         return d
@@ -84,7 +82,7 @@ def to_key(d: date | str) -> str:
 def is_weekend(d: date | str) -> bool:
     if isinstance(d, str):
         d = date.fromisoformat(d.split("T")[0])
-    return d.weekday() in (5, 6)  # Saturday (5) and Sunday (6)
+    return d.weekday() in (5, 6)  # Saturday (5) & Sunday (6) strictly
 
 
 def format_rm(val: float | int | None) -> str:
@@ -134,7 +132,6 @@ def period_for(card_id: str, offset: int = 0) -> dict[str, str]:
     }
 
 
-# --- Cashback Engine ---
 def compute_cashback(config: CardInfo, in_period: list[dict]) -> dict:
     total_spend = sum(float(t.get("amount", 0.0)) for t in in_period)
     qualified = total_spend >= config.min_spend
@@ -166,7 +163,6 @@ def compute_cashback(config: CardInfo, in_period: list[dict]) -> dict:
 
             earned += amt * rate
 
-        # Enforce category cap
         capped = False
         if cat_cfg.cap is not None:
             if earned >= cat_cfg.cap:

@@ -46,7 +46,6 @@ accent = ACCENTS[active_tab]
 
 
 def format_display_date(d_val) -> str:
-    """Formats date as DD/MMM/YYYY (e.g. 15/Sep/2026)."""
     if isinstance(d_val, str):
         try:
             d_val = date.fromisoformat(d_val.split("T")[0])
@@ -85,7 +84,6 @@ st.markdown(
     .cat-sub-row {{ display:flex; justify-content:space-between; font-size:12px; color:#8A8F98; }}
     .badge {{ font-size:10px; font-weight:700; padding:2px 7px; border-radius:999px; color:white; }}
 
-    /* Outline buttons for action icons */
     div[class*="st-key-prev_"] button,
     div[class*="st-key-next_"] button,
     div[class*="st-key-del_"] button,
@@ -105,7 +103,6 @@ st.markdown(
         color: {accent} !important;
     }}
 
-    /* Outlined bottom Add Transaction button */
     .st-key-bottom_bar {{
         position: fixed; left:50%; transform: translateX(-50%);
         bottom: 0; width: 100%; max-width: 480px;
@@ -128,7 +125,6 @@ st.markdown(
         color: white !important;
     }}
 
-    /* Outlined Dialog buttons */
     div[data-testid="stDialog"] button[kind="primary"] {{
         border: 2px solid {accent} !important;
         background: {accent} !important;
