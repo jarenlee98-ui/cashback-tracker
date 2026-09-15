@@ -36,7 +36,6 @@ CATEGORY_ICONS = {
 TAB_LABELS = {"UOB_ONE": "UOB ONE", "HLB_WISE": "HLB WISE", "BY_USER": "By User"}
 ACCENTS = {"UOB_ONE": "#1E4FD8", "HLB_WISE": "#C23B3B", "BY_USER": "#111318"}
 
-# ---------- session state ----------
 if "offsets" not in st.session_state:
     st.session_state.offsets = {"UOB_ONE": 0, "HLB_WISE": 0}
 if "active_tab" not in st.session_state:
@@ -46,18 +45,16 @@ active_tab = st.session_state.active_tab
 accent = ACCENTS[active_tab]
 
 
-# ---------- date display helper ----------
 def format_display_date(d_val) -> str:
-    """Formats dates as DD/MMM/YYYY (e.g. 15/Sep/2026)."""
+    """Formats date as DD/MMM/YYYY (e.g. 15/Sep/2026)."""
     if isinstance(d_val, str):
         try:
-            d_val = date.fromisoformat(d_val)
+            d_val = date.fromisoformat(d_val.split("T")[0])
         except ValueError:
             return d_val
     return d_val.strftime("%d/%b/%Y")
 
 
-# ---------- global styling ----------
 st.markdown(
     f"""
     <style>
@@ -86,30 +83,29 @@ st.markdown(
     .cat-main {{ flex:1; min-width:0; }}
     .cat-title-row {{ display:flex; justify-content:space-between; font-weight:600; font-size:14px; }}
     .cat-sub-row {{ display:flex; justify-content:space-between; font-size:12px; color:#8A8F98; }}
-    .txn-row {{ display:flex; justify-content:space-between; align-items:center; padding:10px 0; border-bottom:1px solid #F0F1F4; }}
-    .txn-row:last-child {{ border-bottom:none; }}
     .badge {{ font-size:10px; font-weight:700; padding:2px 7px; border-radius:999px; color:white; }}
 
-    /* Ghost buttons scoped strictly to nav arrows, edit, and delete */
+    /* Outline buttons for action icons */
     div[class*="st-key-prev_"] button,
     div[class*="st-key-next_"] button,
     div[class*="st-key-del_"] button,
     div[class*="st-key-edit_"] button {{
-        border: none !important;
-        background: transparent !important;
-        box-shadow: none !important;
+        border: 1px solid #E2E8F0 !important;
+        background: #FFFFFF !important;
+        border-radius: 8px !important;
+        box-shadow: 0 1px 2px rgba(0,0,0,.04) !important;
         padding: 4px 6px !important;
     }}
     div[class*="st-key-prev_"] button:hover,
     div[class*="st-key-next_"] button:hover,
     div[class*="st-key-del_"] button:hover,
     div[class*="st-key-edit_"] button:hover {{
-        background: #F2F4F8 !important;
+        background: #F8FAFC !important;
+        border-color: {accent} !important;
         color: {accent} !important;
-        border-radius: 8px !important;
     }}
 
-    /* Fixed bottom Add Transaction bar */
+    /* Outlined bottom Add Transaction button */
     .st-key-bottom_bar {{
         position: fixed; left:50%; transform: translateX(-50%);
         bottom: 0; width: 100%; max-width: 480px;
@@ -117,17 +113,22 @@ st.markdown(
         z-index: 999;
     }}
     .st-key-add_txn_btn button {{
-        background: {accent} !important; color: white !important;
+        background: {accent} !important;
+        color: white !important;
         border: 2px solid {accent} !important;
-        border-radius: 14px !important; height: 52px !important;
-        font-weight: 700 !important; font-size: 15px !important; width: 100%;
+        border-radius: 14px !important;
+        height: 52px !important;
+        font-weight: 700 !important;
+        font-size: 15px !important;
+        width: 100%;
         box-shadow: 0 6px 16px rgba(0,0,0,.18) !important;
     }}
-    .st-key-add_txn_btn button:hover {{ opacity:.92; color:white !important; }}
+    .st-key-add_txn_btn button:hover {{
+        opacity: .92;
+        color: white !important;
+    }}
 
-    /* Dialog submit buttons outline & box styling */
-    .st-key-dialog_add_txn button,
-    .st-key-dialog_edit_txn button,
+    /* Outlined Dialog buttons */
     div[data-testid="stDialog"] button[kind="primary"] {{
         border: 2px solid {accent} !important;
         background: {accent} !important;
@@ -138,12 +139,6 @@ st.markdown(
         font-size: 15px !important;
         width: 100% !important;
         box-shadow: 0 2px 8px rgba(0,0,0,.12) !important;
-    }}
-    .st-key-dialog_add_txn button:hover,
-    .st-key-dialog_edit_txn button:hover,
-    div[data-testid="stDialog"] button[kind="primary"]:hover {{
-        opacity: .92 !important;
-        color: white !important;
     }}
     </style>
     """,
@@ -162,7 +157,6 @@ def cat_icon_html(key: str) -> str:
 
 
 def save_edited_transaction(txn_id, card: str, user: str, amount: float, txn_date: str, category: str, remark: str | None):
-    """Safely updates a transaction record across different db implementations."""
     for fn_name in ("update_transaction", "edit_transaction", "modify_transaction"):
         if hasattr(db, fn_name):
             try:
@@ -178,7 +172,6 @@ def save_edited_transaction(txn_id, card: str, user: str, amount: float, txn_dat
                 except Exception:
                     pass
 
-    # Fallback to replace_all if available
     if hasattr(db, "replace_all"):
         txns = db.get_transactions()
         for t in txns:
@@ -193,7 +186,6 @@ def save_edited_transaction(txn_id, card: str, user: str, amount: float, txn_dat
         db.replace_all(txns)
         return
 
-    # Secondary fallback: remove and add
     db.remove_transaction(txn_id)
     db.add_transaction(
         card=card, user=user, amount=amount,
@@ -201,7 +193,6 @@ def save_edited_transaction(txn_id, card: str, user: str, amount: float, txn_dat
     )
 
 
-# ---------- donut chart ----------
 def donut_chart(slices: list[dict], center_value: str, center_label: str, key: str):
     slices = [s for s in slices if s["value"] > 0]
     if not slices:
@@ -239,7 +230,6 @@ def donut_chart(slices: list[dict], center_value: str, center_label: str, key: s
     st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False}, key=key)
 
 
-# ---------- add transaction dialog ----------
 @st.dialog("Add transaction")
 def add_transaction_dialog(default_card: str):
     card = st.radio(
@@ -249,12 +239,9 @@ def add_transaction_dialog(default_card: str):
     )
     user = st.radio("Paid by", options=USERS, horizontal=True)
 
-    # Starts from 0 without 0.00 decimals
     amount = st.number_input(
         "Amount (RM)", min_value=0.0, value=None, placeholder="0", step=0.01, format="%g"
     )
-
-    # Input format as DD/MM/YYYY
     txn_date = st.date_input("Date", value=date.today(), format="DD/MM/YYYY")
 
     weekend_flag = is_weekend(to_key(txn_date))
@@ -264,7 +251,7 @@ def add_transaction_dialog(default_card: str):
     category = st.selectbox("Category", categories)
     remark = st.text_input("Remark (optional)", max_chars=60, placeholder="e.g. Insurance, Netflix, utilities")
 
-    if st.button("Add transaction", key="dialog_add_txn", type="primary", use_container_width=True):
+    if st.button("Add transaction", type="primary", use_container_width=True):
         actual_amount = amount if amount is not None else 0.0
         if actual_amount <= 0:
             st.error("Enter an amount greater than 0.")
@@ -276,7 +263,6 @@ def add_transaction_dialog(default_card: str):
             st.rerun()
 
 
-# ---------- edit transaction dialog ----------
 @st.dialog("Edit transaction")
 def edit_transaction_dialog(txn: dict):
     txn_id = txn["id"]
@@ -292,19 +278,17 @@ def edit_transaction_dialog(txn: dict):
         index=USERS.index(txn["user"]) if txn["user"] in USERS else 0,
         horizontal=True, key=f"edit_user_{txn_id}",
     )
-
     amount = st.number_input(
         "Amount (RM)", min_value=0.0, value=float(txn["amount"]),
         step=0.01, format="%g", key=f"edit_amt_{txn_id}",
     )
 
     try:
-        current_date = date.fromisoformat(txn["date"])
+        current_date = date.fromisoformat(txn["date"].split("T")[0])
     except Exception:
         current_date = date.today()
 
     txn_date = st.date_input("Date", value=current_date, format="DD/MM/YYYY", key=f"edit_date_{txn_id}")
-
     weekend_flag = is_weekend(to_key(txn_date))
     st.caption(f"{'🟢 Weekend' if weekend_flag else '⚪ Weekday'} · {format_display_date(txn_date)}")
 
@@ -316,7 +300,7 @@ def edit_transaction_dialog(txn: dict):
         placeholder="e.g. Insurance, Netflix, utilities", key=f"edit_rem_{txn_id}",
     )
 
-    if st.button("Save changes", key="dialog_edit_txn", type="primary", use_container_width=True):
+    if st.button("Save changes", type="primary", use_container_width=True):
         if amount <= 0:
             st.error("Enter an amount greater than 0.")
         else:
@@ -327,7 +311,6 @@ def edit_transaction_dialog(txn: dict):
             st.rerun()
 
 
-# ---------- card panel ----------
 def render_card_panel(card_id: str, transactions: list[dict]):
     config = CARD_CONFIG[card_id]
     offset = st.session_state.offsets[card_id]
@@ -369,7 +352,6 @@ def render_card_panel(card_id: str, transactions: list[dict]):
         unsafe_allow_html=True,
     )
 
-    # period nav
     st.markdown('<div class="card" style="padding:6px 8px;">', unsafe_allow_html=True)
     c1, c2, c3 = st.columns([1, 5, 1])
     with c1:
@@ -384,7 +366,6 @@ def render_card_panel(card_id: str, transactions: list[dict]):
             st.rerun()
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # min spend
     status_html = (
         '<span class="pill pill-ok">Unlocked</span>' if result["qualified"]
         else f'<span class="pill">{format_rm(max(0, config.min_spend - result["total_spend"]))} to go</span>'
@@ -407,7 +388,6 @@ def render_card_panel(card_id: str, transactions: list[dict]):
         unsafe_allow_html=True,
     )
 
-    # donut + breakdown
     st.markdown('<div class="card">', unsafe_allow_html=True)
     st.markdown('<div style="font-weight:600;font-size:15px;margin-bottom:8px;">Spend breakdown</div>', unsafe_allow_html=True)
     slices = [
@@ -433,7 +413,6 @@ def render_card_panel(card_id: str, transactions: list[dict]):
         st.markdown(rows, unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # transactions
     st.markdown('<div class="card">', unsafe_allow_html=True)
     st.markdown(f'<div style="font-weight:600;font-size:15px;margin-bottom:4px;">Transactions <span style="color:#8A8F98;">({len(in_period)})</span></div>', unsafe_allow_html=True)
     if not in_period:
@@ -472,7 +451,6 @@ def render_card_panel(card_id: str, transactions: list[dict]):
     st.markdown("</div>", unsafe_allow_html=True)
 
 
-# ---------- user panel ----------
 def render_user_panel(transactions: list[dict]):
     periods = {cid: period_for(cid, st.session_state.offsets[cid]) for cid in CARD_CONFIG}
     current = [t for t in transactions if periods[t["card"]]["start_key"] <= t["date"] <= periods[t["card"]]["end_key"]]
@@ -526,7 +504,6 @@ def render_user_panel(transactions: list[dict]):
             )
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # settlement
     a, b = per_user
     diff = a["spend"] - b["spend"]
     if abs(diff) < 0.01:
@@ -544,7 +521,6 @@ def render_user_panel(transactions: list[dict]):
         unsafe_allow_html=True,
     )
 
-    # recent activity
     recent = sorted(current, key=lambda t: t["date"], reverse=True)[:20]
     st.markdown('<div class="card">', unsafe_allow_html=True)
     st.markdown(f'<div style="font-weight:600;font-size:15px;margin-bottom:4px;">Recent activity <span style="color:#8A8F98;">({len(current)})</span></div>', unsafe_allow_html=True)
@@ -584,7 +560,6 @@ def render_user_panel(transactions: list[dict]):
     st.markdown("</div>", unsafe_allow_html=True)
 
 
-# ---------- header ----------
 h1, h2 = st.columns([3, 2])
 with h1:
     st.markdown('<div style="font-size:20px;font-weight:700;">Cashback Tracker</div>', unsafe_allow_html=True)
@@ -611,7 +586,6 @@ with h2:
             except Exception as e:
                 st.error(f"Failed to parse file: {e}")
 
-# ---------- pill tab bar ----------
 selected_label = st.pills(
     "View", options=list(TAB_LABELS.values()), default=TAB_LABELS[active_tab],
     label_visibility="collapsed",
