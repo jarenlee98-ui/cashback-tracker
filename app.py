@@ -15,7 +15,6 @@ from cards import (
     USER_COLORS,
     USERS,
     compute_cashback,
-    format_dmy,
     format_rm,
     is_weekend,
     period_for,
@@ -45,6 +44,18 @@ if "active_tab" not in st.session_state:
 
 active_tab = st.session_state.active_tab
 accent = ACCENTS[active_tab]
+
+
+# ---------- date display helper ----------
+def format_display_date(d_val) -> str:
+    """Formats dates as DD/MMM/YYYY (e.g. 15/Sep/2026)."""
+    if isinstance(d_val, str):
+        try:
+            d_val = date.fromisoformat(d_val)
+        except ValueError:
+            return d_val
+    return d_val.strftime("%d/%b/%Y")
+
 
 # ---------- global styling ----------
 st.markdown(
@@ -79,13 +90,26 @@ st.markdown(
     .txn-row:last-child {{ border-bottom:none; }}
     .badge {{ font-size:10px; font-weight:700; padding:2px 7px; border-radius:999px; color:white; }}
 
-    /* nav arrow + delete buttons: ghost style */
-    div[data-testid="stButton"] button {{
-        border: none; background: transparent; box-shadow: none;
+    /* Ghost buttons scoped strictly to nav arrows, edit, and delete */
+    div[class*="st-key-prev_"] button,
+    div[class*="st-key-next_"] button,
+    div[class*="st-key-del_"] button,
+    div[class*="st-key-edit_"] button {{
+        border: none !important;
+        background: transparent !important;
+        box-shadow: none !important;
+        padding: 4px 6px !important;
     }}
-    div[data-testid="stButton"] button:hover {{ background:#F2F4F8; color:{accent}; }}
+    div[class*="st-key-prev_"] button:hover,
+    div[class*="st-key-next_"] button:hover,
+    div[class*="st-key-del_"] button:hover,
+    div[class*="st-key-edit_"] button:hover {{
+        background: #F2F4F8 !important;
+        color: {accent} !important;
+        border-radius: 8px !important;
+    }}
 
-    /* fixed bottom Add Transaction bar */
+    /* Fixed bottom Add Transaction bar */
     .st-key-bottom_bar {{
         position: fixed; left:50%; transform: translateX(-50%);
         bottom: 0; width: 100%; max-width: 480px;
@@ -94,11 +118,33 @@ st.markdown(
     }}
     .st-key-add_txn_btn button {{
         background: {accent} !important; color: white !important;
+        border: 2px solid {accent} !important;
         border-radius: 14px !important; height: 52px !important;
         font-weight: 700 !important; font-size: 15px !important; width: 100%;
         box-shadow: 0 6px 16px rgba(0,0,0,.18) !important;
     }}
     .st-key-add_txn_btn button:hover {{ opacity:.92; color:white !important; }}
+
+    /* Dialog submit buttons outline & box styling */
+    .st-key-dialog_add_txn button,
+    .st-key-dialog_edit_txn button,
+    div[data-testid="stDialog"] button[kind="primary"] {{
+        border: 2px solid {accent} !important;
+        background: {accent} !important;
+        color: white !important;
+        border-radius: 12px !important;
+        height: 46px !important;
+        font-weight: 700 !important;
+        font-size: 15px !important;
+        width: 100% !important;
+        box-shadow: 0 2px 8px rgba(0,0,0,.12) !important;
+    }}
+    .st-key-dialog_add_txn button:hover,
+    .st-key-dialog_edit_txn button:hover,
+    div[data-testid="stDialog"] button[kind="primary"]:hover {{
+        opacity: .92 !important;
+        color: white !important;
+    }}
     </style>
     """,
     unsafe_allow_html=True,
@@ -113,6 +159,46 @@ def cat_icon_html(key: str) -> str:
     color = CATEGORY_COLORS.get(key, "#9AA3AF")
     icon = CATEGORY_ICONS.get(key, "👛")
     return f'<div class="cat-icon" style="background:{color}2e;">{icon}</div>'
+
+
+def save_edited_transaction(txn_id, card: str, user: str, amount: float, txn_date: str, category: str, remark: str | None):
+    """Safely updates a transaction record across different db implementations."""
+    for fn_name in ("update_transaction", "edit_transaction", "modify_transaction"):
+        if hasattr(db, fn_name):
+            try:
+                getattr(db, fn_name)(
+                    id=txn_id, card=card, user=user, amount=amount,
+                    date=txn_date, category=category, remark=remark,
+                )
+                return
+            except TypeError:
+                try:
+                    getattr(db, fn_name)(txn_id, card, user, amount, txn_date, category, remark)
+                    return
+                except Exception:
+                    pass
+
+    # Fallback to replace_all if available
+    if hasattr(db, "replace_all"):
+        txns = db.get_transactions()
+        for t in txns:
+            if str(t.get("id")) == str(txn_id):
+                t["card"] = card
+                t["user"] = user
+                t["amount"] = amount
+                t["date"] = txn_date
+                t["category"] = category
+                t["remark"] = remark
+                break
+        db.replace_all(txns)
+        return
+
+    # Secondary fallback: remove and add
+    db.remove_transaction(txn_id)
+    db.add_transaction(
+        card=card, user=user, amount=amount,
+        date=txn_date, category=category, remark=remark,
+    )
 
 
 # ---------- donut chart ----------
@@ -132,7 +218,7 @@ def donut_chart(slices: list[dict], center_value: str, center_label: str, key: s
             xaxis=dict(visible=False, range=[0, 1], fixedrange=True),
             yaxis=dict(visible=False, range=[0, 1], fixedrange=True),
         )
-        st.plotly_chart(fig, width="stretch", config={"displayModeBar": False}, key=key)
+        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False}, key=key)
         return
 
     fig = go.Figure(
@@ -150,7 +236,7 @@ def donut_chart(slices: list[dict], center_value: str, center_label: str, key: s
             x=0.5, y=0.5, showarrow=False, font=dict(size=18, color="#111318"),
         )],
     )
-    st.plotly_chart(fig, width="stretch", config={"displayModeBar": False}, key=key)
+    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False}, key=key)
 
 
 # ---------- add transaction dialog ----------
@@ -162,46 +248,81 @@ def add_transaction_dialog(default_card: str):
         index=list(CARD_CONFIG.keys()).index(default_card), horizontal=True,
     )
     user = st.radio("Paid by", options=USERS, horizontal=True)
-    amount = st.number_input("Amount (RM)", min_value=0.0, step=0.01, format="%.2f")
 
-    st.write("Date")
-    today = date.today()
-    month_names = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
-    dcol1, dcol2, dcol3 = st.columns([1, 1.3, 1.2])
-    with dcol1:
-        day = st.selectbox("Day", options=list(range(1, 32)), index=today.day - 1, label_visibility="collapsed")
-    with dcol2:
-        month = st.selectbox("Month", options=month_names, index=today.month - 1, label_visibility="collapsed")
-    with dcol3:
-        year = st.number_input("Year", min_value=2020, max_value=2035, value=today.year, step=1, label_visibility="collapsed")
+    # Starts from 0 without 0.00 decimals
+    amount = st.number_input(
+        "Amount (RM)", min_value=0.0, value=None, placeholder="0", step=0.01, format="%g"
+    )
 
-    month_num = month_names.index(month) + 1
-    try:
-        txn_date = date(int(year), month_num, day)
-        date_error = None
-    except ValueError:
-        txn_date = today
-        date_error = f"{day} {month} {year} isn't a real date — check the day."
+    # Input format as DD/MM/YYYY
+    txn_date = st.date_input("Date", value=date.today(), format="DD/MM/YYYY")
 
-    if date_error:
-        st.error(date_error)
-    else:
-        weekend_flag = is_weekend(to_key(txn_date))
-        st.caption(f"{'🟢 Weekend' if weekend_flag else '⚪ Weekday'} · {txn_date.strftime('%d %b %Y')}")
+    weekend_flag = is_weekend(to_key(txn_date))
+    st.caption(f"{'🟢 Weekend' if weekend_flag else '⚪ Weekday'} · {format_display_date(txn_date)}")
 
     categories = [c.key for c in CARD_CONFIG[card].categories]
     category = st.selectbox("Category", categories)
     remark = st.text_input("Remark (optional)", max_chars=60, placeholder="e.g. Insurance, Netflix, utilities")
 
-    if st.button("Add transaction", type="primary", width="stretch"):
-        if amount <= 0:
+    if st.button("Add transaction", key="dialog_add_txn", type="primary", use_container_width=True):
+        actual_amount = amount if amount is not None else 0.0
+        if actual_amount <= 0:
             st.error("Enter an amount greater than 0.")
-        elif date_error:
-            st.error(date_error)
         else:
             db.add_transaction(
-                card=card, user=user, amount=round(amount, 2),
+                card=card, user=user, amount=round(actual_amount, 2),
                 date=to_key(txn_date), category=category, remark=remark.strip() or None,
+            )
+            st.rerun()
+
+
+# ---------- edit transaction dialog ----------
+@st.dialog("Edit transaction")
+def edit_transaction_dialog(txn: dict):
+    txn_id = txn["id"]
+    default_card = txn["card"] if txn["card"] in CARD_CONFIG else list(CARD_CONFIG.keys())[0]
+    card = st.radio(
+        "Card", options=list(CARD_CONFIG.keys()),
+        format_func=lambda c: CARD_CONFIG[c].name,
+        index=list(CARD_CONFIG.keys()).index(default_card), horizontal=True,
+        key=f"edit_card_{txn_id}",
+    )
+    user = st.radio(
+        "Paid by", options=USERS,
+        index=USERS.index(txn["user"]) if txn["user"] in USERS else 0,
+        horizontal=True, key=f"edit_user_{txn_id}",
+    )
+
+    amount = st.number_input(
+        "Amount (RM)", min_value=0.0, value=float(txn["amount"]),
+        step=0.01, format="%g", key=f"edit_amt_{txn_id}",
+    )
+
+    try:
+        current_date = date.fromisoformat(txn["date"])
+    except Exception:
+        current_date = date.today()
+
+    txn_date = st.date_input("Date", value=current_date, format="DD/MM/YYYY", key=f"edit_date_{txn_id}")
+
+    weekend_flag = is_weekend(to_key(txn_date))
+    st.caption(f"{'🟢 Weekend' if weekend_flag else '⚪ Weekday'} · {format_display_date(txn_date)}")
+
+    categories = [c.key for c in CARD_CONFIG[card].categories]
+    cat_idx = categories.index(txn["category"]) if txn["category"] in categories else 0
+    category = st.selectbox("Category", categories, index=cat_idx, key=f"edit_cat_{txn_id}")
+    remark = st.text_input(
+        "Remark (optional)", value=txn.get("remark") or "", max_chars=60,
+        placeholder="e.g. Insurance, Netflix, utilities", key=f"edit_rem_{txn_id}",
+    )
+
+    if st.button("Save changes", key="dialog_edit_txn", type="primary", use_container_width=True):
+        if amount <= 0:
+            st.error("Enter an amount greater than 0.")
+        else:
+            save_edited_transaction(
+                txn_id=txn_id, card=card, user=user, amount=round(amount, 2),
+                txn_date=to_key(txn_date), category=category, remark=remark.strip() or None,
             )
             st.rerun()
 
@@ -252,13 +373,13 @@ def render_card_panel(card_id: str, transactions: list[dict]):
     st.markdown('<div class="card" style="padding:6px 8px;">', unsafe_allow_html=True)
     c1, c2, c3 = st.columns([1, 5, 1])
     with c1:
-        if st.button("‹", key=f"prev_{card_id}", width="stretch"):
+        if st.button("‹", key=f"prev_{card_id}", use_container_width=True):
             st.session_state.offsets[card_id] -= 1
             st.rerun()
     with c2:
         st.markdown(f"<div style='text-align:center;padding-top:8px;font-weight:600;font-size:14px;'>{period['label']}</div>", unsafe_allow_html=True)
     with c3:
-        if st.button("›", key=f"next_{card_id}", disabled=offset >= 0, width="stretch"):
+        if st.button("›", key=f"next_{card_id}", disabled=offset >= 0, use_container_width=True):
             st.session_state.offsets[card_id] += 1
             st.rerun()
     st.markdown("</div>", unsafe_allow_html=True)
@@ -323,7 +444,7 @@ def render_card_panel(card_id: str, transactions: list[dict]):
             u_color = USER_COLORS.get(t["user"], "#888")
             remark_txt = f" · {t['remark']}" if t.get("remark") else ""
             weekend_badge = '<span class="badge" style="background:#16A34A;">Weekend</span>' if weekend else '<span class="badge" style="background:#B8BCC4;">Weekday</span>'
-            col1, col2 = st.columns([5, 1.2])
+            col1, col2 = st.columns([4.4, 1.8])
             with col1:
                 st.markdown(
                     f"""
@@ -333,16 +454,21 @@ def render_card_panel(card_id: str, transactions: list[dict]):
                         <span class="badge" style="background:{u_color};">{t['user']}</span>
                         {weekend_badge}
                       </div>
-                      <div style="font-size:12px;color:#8A8F98;">{format_dmy(t['date'])}{remark_txt}</div>
+                      <div style="font-size:12px;color:#8A8F98;">{format_display_date(t['date'])}{remark_txt}</div>
                     </div>
                     """,
                     unsafe_allow_html=True,
                 )
             with col2:
-                st.markdown(f'<div style="font-family:monospace;text-align:right;padding-top:6px;">{format_rm(t["amount"])}</div>', unsafe_allow_html=True)
-                if st.button("🗑️", key=f"del_{t['id']}"):
-                    db.remove_transaction(t["id"])
-                    st.rerun()
+                st.markdown(f'<div style="font-family:monospace;text-align:right;font-weight:600;font-size:14px;">{format_rm(t["amount"])}</div>', unsafe_allow_html=True)
+                act_c1, act_c2 = st.columns(2)
+                with act_c1:
+                    if st.button("✏️", key=f"edit_{t['id']}", help="Edit transaction"):
+                        edit_transaction_dialog(t)
+                with act_c2:
+                    if st.button("🗑️", key=f"del_{t['id']}", help="Delete transaction"):
+                        db.remove_transaction(t["id"])
+                        st.rerun()
     st.markdown("</div>", unsafe_allow_html=True)
 
 
@@ -430,7 +556,7 @@ def render_user_panel(transactions: list[dict]):
             u_color = USER_COLORS.get(t["user"], "#888")
             remark_txt = f" · {t['remark']}" if t.get("remark") else ""
             weekend_badge = ' · <span class="badge" style="background:#16A34A;">Weekend</span>' if weekend else ""
-            col1, col2 = st.columns([5, 1.2])
+            col1, col2 = st.columns([4.4, 1.8])
             with col1:
                 st.markdown(
                     f"""
@@ -440,16 +566,21 @@ def render_user_panel(transactions: list[dict]):
                         <span style="font-weight:600;font-size:14px;">{t['category']}</span>
                         <span style="font-size:12px;color:#8A8F98;">{CARD_CONFIG[t['card']].name}{weekend_badge}</span>
                       </div>
-                      <div style="font-size:12px;color:#8A8F98;">{format_dmy(t['date'])}{remark_txt}</div>
+                      <div style="font-size:12px;color:#8A8F98;">{format_display_date(t['date'])}{remark_txt}</div>
                     </div>
                     """,
                     unsafe_allow_html=True,
                 )
             with col2:
-                st.markdown(f'<div style="font-family:monospace;text-align:right;padding-top:6px;">{format_rm(t["amount"])}</div>', unsafe_allow_html=True)
-                if st.button("🗑️", key=f"del_recent_{t['id']}"):
-                    db.remove_transaction(t["id"])
-                    st.rerun()
+                st.markdown(f'<div style="font-family:monospace;text-align:right;font-weight:600;font-size:14px;">{format_rm(t["amount"])}</div>', unsafe_allow_html=True)
+                act_c1, act_c2 = st.columns(2)
+                with act_c1:
+                    if st.button("✏️", key=f"edit_recent_{t['id']}", help="Edit transaction"):
+                        edit_transaction_dialog(t)
+                with act_c2:
+                    if st.button("🗑️", key=f"del_recent_{t['id']}", help="Delete transaction"):
+                        db.remove_transaction(t["id"])
+                        st.rerun()
     st.markdown("</div>", unsafe_allow_html=True)
 
 
@@ -464,7 +595,7 @@ with h2:
         st.download_button(
             "⬇ Export", data=json.dumps(get_transactions(), indent=2, default=str),
             file_name=f"cashback_tracker_backup_{date.today().isoformat()}.json",
-            mime="application/json", width="stretch",
+            mime="application/json", use_container_width=True,
         )
     with b2:
         uploaded = st.file_uploader("Import", type="json", label_visibility="collapsed")
@@ -503,5 +634,5 @@ else:
 
 with st.container(key="bottom_bar"):
     default_card = active_tab if active_tab in CARD_CONFIG else "UOB_ONE"
-    if st.button("➕  Add Transaction", key="add_txn_btn", width="stretch"):
+    if st.button("➕  Add Transaction", key="add_txn_btn", use_container_width=True):
         add_transaction_dialog(default_card)
