@@ -163,19 +163,41 @@ def add_transaction_dialog(default_card: str):
     )
     user = st.radio("Paid by", options=USERS, horizontal=True)
     amount = st.number_input("Amount (RM)", min_value=0.0, step=0.01, format="%.2f")
-    txn_date = st.date_input("Date", value=date.today())
-    weekend_flag = is_weekend(to_key(txn_date))
-    st.caption("🟢 Weekend" if weekend_flag else "⚪ Weekday")
+
+    st.write("Date")
+    today = date.today()
+    month_names = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+    dcol1, dcol2, dcol3 = st.columns([1, 1.3, 1.2])
+    with dcol1:
+        day = st.selectbox("Day", options=list(range(1, 32)), index=today.day - 1, label_visibility="collapsed")
+    with dcol2:
+        month = st.selectbox("Month", options=month_names, index=today.month - 1, label_visibility="collapsed")
+    with dcol3:
+        year = st.number_input("Year", min_value=2020, max_value=2035, value=today.year, step=1, label_visibility="collapsed")
+
+    month_num = month_names.index(month) + 1
+    try:
+        txn_date = date(int(year), month_num, day)
+        date_error = None
+    except ValueError:
+        txn_date = today
+        date_error = f"{day} {month} {year} isn't a real date — check the day."
+
+    if date_error:
+        st.error(date_error)
+    else:
+        weekend_flag = is_weekend(to_key(txn_date))
+        st.caption(f"{'🟢 Weekend' if weekend_flag else '⚪ Weekday'} · {txn_date.strftime('%d %b %Y')}")
 
     categories = [c.key for c in CARD_CONFIG[card].categories]
     category = st.selectbox("Category", categories)
-    remark = ""
-    if category == "Others":
-        remark = st.text_input("Remark (optional)", max_chars=60, placeholder="e.g. Insurance, Netflix, utilities")
+    remark = st.text_input("Remark (optional)", max_chars=60, placeholder="e.g. Insurance, Netflix, utilities")
 
     if st.button("Add transaction", type="primary", width="stretch"):
         if amount <= 0:
             st.error("Enter an amount greater than 0.")
+        elif date_error:
+            st.error(date_error)
         else:
             db.add_transaction(
                 card=card, user=user, amount=round(amount, 2),
