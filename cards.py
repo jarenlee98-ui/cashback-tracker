@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import calendar
 from dataclasses import dataclass
 from datetime import date, timedelta
 
@@ -21,8 +22,7 @@ class CardInfo:
     name: str
     issuer: str
     min_spend: float
-    period_type: str  # "cycle" or "calendar"
-    cycle_day: int
+    period_type: str  # "calendar" or custom cycle handling
     categories: list[CategoryConfig]
 
 
@@ -34,7 +34,6 @@ CARD_CONFIG: dict[str, CardInfo] = {
         issuer="UOB",
         min_spend=800.0,
         period_type="cycle",
-        cycle_day=17,  # Cycle 17th to 16th
         categories=[
             CategoryConfig(key="Dining", rate=0.10, cap=10.0),
             CategoryConfig(key="Petrol", rate=0.10, cap=10.0),
@@ -48,8 +47,7 @@ CARD_CONFIG: dict[str, CardInfo] = {
         name="HLB WISE",
         issuer="Hong Leong Bank",
         min_spend=1000.0,
-        period_type="cycle",
-        cycle_day=14,  # Cycle 14th to 13th
+        period_type="calendar",
         categories=[
             CategoryConfig(key="Dining", weekend_rate=0.15, weekday_rate=0.005, cap=20.0),
             CategoryConfig(key="Petrol", weekend_rate=0.10, weekday_rate=0.005, cap=15.0),
@@ -76,7 +74,6 @@ USER_COLORS: dict[str, str] = {
 }
 
 
-# --- Helpers ---
 def to_key(d: date | str) -> str:
     if isinstance(d, str):
         return d
@@ -106,28 +103,51 @@ def _shift_month(y: int, m: int, offset: int) -> tuple[int, int]:
     return total_m // 12, (total_m % 12) + 1
 
 
+def _generate_uob_periods() -> list[tuple[date, date]]:
+    """Builds historical and forward periods accounting for the transition cycle."""
+    periods: list[tuple[date, date]] = []
+
+    # Old cycle (17th to 16th): Oct 2024 up to 17 Aug - 16 Sep 2026
+    start_y, start_m = 2024, 10
+    while (start_y, start_m) <= (2026, 8):
+        ey, em = _shift_month(start_y, start_m, 1)
+        periods.append((date(start_y, start_m, 17), date(ey, em, 16)))
+        start_y, start_m = ey, em
+
+    # Transitional cycle: 17 Sept 2026 - 01 Oct 2026
+    periods.append((date(2026, 9, 17), date(2026, 10, 1)))
+
+    # New cycle (2nd to 1st next month): starting 02 Oct 2026 onward
+    curr_y, curr_m = 2026, 10
+    for _ in range(60):  # Projections for future months
+        ey, em = _shift_month(curr_y, curr_m, 1)
+        periods.append((date(curr_y, curr_m, 2), date(ey, em, 1)))
+        curr_y, curr_m = ey, em
+
+    return periods
+
+
 def period_for(card_id: str, offset: int = 0) -> dict[str, str]:
     today = date.today()
     config = CARD_CONFIG[card_id]
 
-    if config.period_type == "cycle":
-        start_day = config.cycle_day
-        if today.day >= start_day:
-            base_y, base_m = today.year, today.month
-        else:
-            base_y, base_m = _shift_month(today.year, today.month, -1)
+    if card_id == "UOB_ONE":
+        all_periods = _generate_uob_periods()
+        active_idx = len(all_periods) - 1
+        for idx, (s_dt, e_dt) in enumerate(all_periods):
+            if s_dt <= today <= e_dt:
+                active_idx = idx
+                break
 
-        sy, sm = _shift_month(base_y, base_m, offset)
-        ey, em = _shift_month(sy, sm, 1)
-
-        start_dt = date(sy, sm, start_day)
-        end_dt = date(ey, em, start_day) - timedelta(days=1)
+        target_idx = max(0, min(len(all_periods) - 1, active_idx + offset))
+        start_dt, end_dt = all_periods[target_idx]
         label = f"{start_dt.strftime('%d %b')} – {end_dt.strftime('%d %b %Y')}"
     else:
+        # HLB WISE: standard calendar month (1st to end of month)
         y, m = _shift_month(today.year, today.month, offset)
+        last_day = calendar.monthrange(y, m)[1]
         start_dt = date(y, m, 1)
-        next_y, next_m = _shift_month(y, m, 1)
-        end_dt = date(next_y, next_m, 1) - timedelta(days=1)
+        end_dt = date(y, m, last_day)
         label = start_dt.strftime("%B %Y")
 
     return {
@@ -137,7 +157,6 @@ def period_for(card_id: str, offset: int = 0) -> dict[str, str]:
     }
 
 
-# --- Cashback Engine ---
 def compute_cashback(config: CardInfo, in_period: list[dict]) -> dict:
     total_spend = sum(float(t.get("amount", 0.0)) for t in in_period)
     qualified = total_spend >= config.min_spend
@@ -145,6 +164,8 @@ def compute_cashback(config: CardInfo, in_period: list[dict]) -> dict:
     cat_txns: dict[str, list[dict]] = {c.key: [] for c in config.categories}
     for t in in_period:
         k = t.get("category", "Others")
+        if k in ("Groceries & Essentials", "Grocery"):
+            k = "Groceries"
         if k not in cat_txns:
             k = "Others"
         cat_txns[k].append(t)

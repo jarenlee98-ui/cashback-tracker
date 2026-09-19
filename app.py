@@ -325,7 +325,7 @@ def render_card_panel(card_id: str, transactions: list[dict]):
 
     result = compute_cashback(config, in_period)
     progress = min(100, round((result["total_spend"] / config.min_spend) * 100)) if config.min_spend else 100
-    period_badge = f"Cycle {config.cycle_day}–{config.cycle_day - 1}" if config.period_type == "cycle" else "Calendar month"
+    period_badge = "Calendar month" if config.period_type == "calendar" else f"{period['start_key'][8:]}–{period['end_key'][8:]}"
 
     st.markdown(
         f"""
