@@ -89,7 +89,9 @@ st.markdown(
     div[class*="st-key-prev_"] button,
     div[class*="st-key-next_"] button,
     div[class*="st-key-del_"] button,
-    div[class*="st-key-edit_"] button {{
+    div[class*="st-key-edit_"] button,
+    div[class*="st-key-user_prev_"] button,
+    div[class*="st-key-user_next_"] button {{
         border: 1px solid #E2E8F0 !important;
         background: #FFFFFF !important;
         border-radius: 8px !important;
@@ -99,7 +101,9 @@ st.markdown(
     div[class*="st-key-prev_"] button:hover,
     div[class*="st-key-next_"] button:hover,
     div[class*="st-key-del_"] button:hover,
-    div[class*="st-key-edit_"] button:hover {{
+    div[class*="st-key-edit_"] button:hover,
+    div[class*="st-key-user_prev_"] button:hover,
+    div[class*="st-key-user_next_"] button:hover {{
         background: #F8FAFC !important;
         border-color: {accent} !important;
         color: {accent} !important;
@@ -311,10 +315,171 @@ def edit_transaction_dialog(txn: dict):
             st.rerun()
 
 
+def render_card_panel(card_id: str, transactions: list[dict]):
+    config = CARD_CONFIG[card_id]
+    offset = st.session_state.offsets[card_id]
+    period = period_for(card_id, offset)
+    card_accent = ACCENTS[card_id]
+
+    in_period = [
+        t for t in transactions
+        if t["card"] == card_id and period["start_key"] <= t["date"] <= period["end_key"]
+    ]
+    in_period.sort(key=lambda t: t["date"], reverse=True)
+
+    result = compute_cashback(config, in_period)
+    progress = min(100, round((result["total_spend"] / config.min_spend) * 100)) if config.min_spend else 100
+
+    if config.period_type == "calendar":
+        period_badge = "Calendar month"
+    else:
+        start_day = int(period["start_key"].split("-")[2])
+        end_day = int(period["end_key"].split("-")[2])
+        period_badge = f"Cycle {start_day}–{end_day}"
+
+    st.markdown(
+        f"""
+        <div style="background:{card_accent};border-radius:18px;padding:22px 20px;color:white;margin-bottom:16px;">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+            <div>
+              <div style="font-size:11px;letter-spacing:.08em;opacity:.75;text-transform:uppercase;">{config.issuer}</div>
+              <div style="font-size:24px;font-weight:700;margin-top:2px;">{config.name}</div>
+            </div>
+            <span class="pill" style="background:rgba(255,255,255,.18);color:white;">{period_badge}</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-top:26px;">
+            <div>
+              <div style="font-size:11px;opacity:.75;text-transform:uppercase;">Cashback earned</div>
+              <div style="font-family:monospace;font-size:28px;font-weight:700;">{format_rm(result['total_cashback'])}</div>
+            </div>
+            <div style="text-align:right;">
+              <div style="font-size:11px;opacity:.75;text-transform:uppercase;">Total spend</div>
+              <div style="font-family:monospace;font-size:18px;font-weight:700;">{format_rm(result['total_spend'])}</div>
+            </div>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    st.markdown('<div class="card" style="padding:6px 8px;">', unsafe_allow_html=True)
+    c1, c2, c3 = st.columns([1, 5, 1])
+    with c1:
+        if st.button("‹", key=f"prev_{card_id}", use_container_width=True):
+            st.session_state.offsets[card_id] -= 1
+            st.rerun()
+    with c2:
+        st.markdown(f"<div style='text-align:center;padding-top:8px;font-weight:600;font-size:14px;'>{period['label']}</div>", unsafe_allow_html=True)
+    with c3:
+        if st.button("›", key=f"next_{card_id}", disabled=offset >= 0, use_container_width=True):
+            st.session_state.offsets[card_id] += 1
+            st.rerun()
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    status_html = (
+        '<span class="pill pill-ok">Unlocked</span>' if result["qualified"]
+        else f'<span class="pill">{format_rm(max(0, config.min_spend - result["total_spend"]))} to go</span>'
+    )
+    st.markdown(
+        f"""
+        <div class="card">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+            <span style="font-weight:600;font-size:15px;">Minimum spend</span>{status_html}
+          </div>
+          <div style="height:9px;border-radius:999px;background:#EEF0F4;overflow:hidden;">
+            <div style="height:100%;width:{progress}%;border-radius:999px;
+                        background:{'#16A34A' if result['qualified'] else card_accent};"></div>
+          </div>
+          <div style="display:flex;justify-content:space-between;margin-top:6px;font-family:monospace;font-size:12px;color:#8A8F98;">
+            <span>{format_rm(result['total_spend'])}</span><span>{format_rm(config.min_spend)}</span>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    st.markdown('<div class="card">', unsafe_allow_html=True)
+    st.markdown('<div style="font-weight:600;font-size:15px;margin-bottom:8px;">Spend breakdown</div>', unsafe_allow_html=True)
+    slices = [
+        {"label": c["key"], "value": c["spend"], "color": CATEGORY_COLORS.get(c["key"], "#9AA3AF")}
+        for c in result["categories"] if c["spend"] > 0
+    ]
+    col_a, col_b = st.columns([1, 1.3])
+    with col_a:
+        donut_chart(slices, format_rm(result["total_spend"]), "spent", key=f"donut_{card_id}")
+    with col_b:
+        rows = ""
+        for c in result["categories"]:
+            cap_txt = f"cap {format_rm(c['cap'])}" if c["cap"] is not None else ""
+            capped_txt = " · <b>capped</b>" if c["capped"] else ""
+            rows += f"""
+            <div class="cat-row">
+              {cat_icon_html(c['key'])}
+              <div class="cat-main">
+                <div class="cat-title-row"><span>{c['key']}</span><span style="font-family:monospace;">{format_rm(c['spend'])}</span></div>
+                <div class="cat-sub-row"><span>{format_rm(c['cashback'])} back{capped_txt}</span><span>{cap_txt}</span></div>
+              </div>
+            </div>"""
+        st.markdown(rows, unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    st.markdown('<div class="card">', unsafe_allow_html=True)
+
+    filter_user = st.pills(
+        "Filter by user",
+        options=["All"] + USERS,
+        default="All",
+        key=f"user_filter_{card_id}",
+        label_visibility="collapsed",
+    )
+
+    filtered_txns = [t for t in in_period if filter_user == "All" or t.get("user") == filter_user]
+
+    st.markdown(
+        f'<div style="font-weight:600;font-size:15px;margin-top:6px;margin-bottom:4px;">Transactions <span style="color:#8A8F98;">({len(filtered_txns)})</span></div>',
+        unsafe_allow_html=True,
+    )
+
+    if not filtered_txns:
+        st.caption(f"No transactions found for {filter_user if filter_user != 'All' else 'this period'}.")
+    else:
+        for t in filtered_txns:
+            weekend = is_weekend(t["date"])
+            u_color = USER_COLORS.get(t["user"], "#888")
+            remark_txt = f" · {t['remark']}" if t.get("remark") else ""
+            weekend_badge = '<span class="badge" style="background:#16A34A;">Weekend</span>' if weekend else '<span class="badge" style="background:#B8BCC4;">Weekday</span>'
+            col1, col2 = st.columns([4.4, 1.8])
+            with col1:
+                st.markdown(
+                    f"""
+                    <div>
+                      <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+                        <span style="font-weight:600;font-size:14px;">{t['category']}</span>
+                        <span class="badge" style="background:{u_color};">{t['user']}</span>
+                        {weekend_badge}
+                      </div>
+                      <div style="font-size:12px;color:#8A8F98;">{format_display_date(t['date'])}{remark_txt}</div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+            with col2:
+                st.markdown(f'<div style="font-family:monospace;text-align:right;font-weight:600;font-size:14px;">{format_rm(t["amount"])}</div>', unsafe_allow_html=True)
+                act_c1, act_c2 = st.columns(2)
+                with act_c1:
+                    if st.button("✏️", key=f"edit_{t['id']}", help="Edit transaction"):
+                        edit_transaction_dialog(t)
+                with act_c2:
+                    if st.button("🗑️", key=f"del_{t['id']}", help="Delete transaction"):
+                        db.remove_transaction(t["id"])
+                        st.rerun()
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
 def render_user_panel(transactions: list[dict]):
-    # --- Card Statement Cycle Selectors ---
+    # Independent Cycle Selectors per Card
     st.markdown('<div class="card" style="padding:14px 16px;margin-bottom:14px;">', unsafe_allow_html=True)
-    st.markdown('<div style="font-weight:600;font-size:14px;margin-bottom:8px;color:#8A8F98;text-transform:uppercase;letter-spacing:0.05em;">Statement Periods</div>', unsafe_allow_html=True)
+    st.markdown('<div style="font-weight:600;font-size:13px;margin-bottom:10px;color:#8A8F98;text-transform:uppercase;letter-spacing:0.05em;">Statement Periods</div>', unsafe_allow_html=True)
 
     periods = {}
     for cid in CARD_CONFIG:
@@ -345,14 +510,13 @@ def render_user_panel(transactions: list[dict]):
 
     st.markdown('</div>', unsafe_allow_html=True)
 
-    # Filter transactions based on the selected period per card
+    # Filter transactions based on each card's active selected period
     current = [
         t for t in transactions
         if periods[t["card"]]["start_key"] <= t["date"] <= periods[t["card"]]["end_key"]
     ]
     total_spend = sum(t["amount"] for t in current)
 
-    # --- Spending Summary ---
     st.markdown(
         f"""
         <div class="card">
@@ -423,115 +587,6 @@ def render_user_panel(transactions: list[dict]):
     st.markdown(f'<div style="font-weight:600;font-size:15px;margin-bottom:4px;">Recent activity <span style="color:#8A8F98;">({len(current)})</span></div>', unsafe_allow_html=True)
     if not recent:
         st.caption("Nothing to show for these cycles.")
-    else:
-        for t in recent:
-            weekend = is_weekend(t["date"])
-            u_color = USER_COLORS.get(t["user"], "#888")
-            remark_txt = f" · {t['remark']}" if t.get("remark") else ""
-            weekend_badge = ' · <span class="badge" style="background:#16A34A;">Weekend</span>' if weekend else ""
-            col1, col2 = st.columns([4.4, 1.8])
-            with col1:
-                st.markdown(
-                    f"""
-                    <div>
-                      <div style="display:flex;align-items:center;gap:6px;">
-                        <span class="badge" style="background:{u_color};">{t['user']}</span>
-                        <span style="font-weight:600;font-size:14px;">{t['category']}</span>
-                        <span style="font-size:12px;color:#8A8F98;">{CARD_CONFIG[t['card']].name}{weekend_badge}</span>
-                      </div>
-                      <div style="font-size:12px;color:#8A8F98;">{format_display_date(t['date'])}{remark_txt}</div>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
-            with col2:
-                st.markdown(f'<div style="font-family:monospace;text-align:right;font-weight:600;font-size:14px;">{format_rm(t["amount"])}</div>', unsafe_allow_html=True)
-                act_c1, act_c2 = st.columns(2)
-                with act_c1:
-                    if st.button("✏️", key=f"edit_recent_{t['id']}", help="Edit transaction"):
-                        edit_transaction_dialog(t)
-                with act_c2:
-                    if st.button("🗑️", key=f"del_recent_{t['id']}", help="Delete transaction"):
-                        db.remove_transaction(t["id"])
-                        st.rerun()
-    st.markdown("</div>", unsafe_allow_html=True)
-
-
-def render_user_panel(transactions: list[dict]):
-    periods = {cid: period_for(cid, st.session_state.offsets[cid]) for cid in CARD_CONFIG}
-    current = [t for t in transactions if periods[t["card"]]["start_key"] <= t["date"] <= periods[t["card"]]["end_key"]]
-    total_spend = sum(t["amount"] for t in current)
-
-    st.markdown(
-        f"""
-        <div class="card">
-          <div style="font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#8A8F98;">Current periods · both cards</div>
-          <div style="font-family:monospace;font-size:28px;font-weight:700;margin-top:4px;">{format_rm(total_spend)}</div>
-          <div style="font-size:12px;color:#8A8F98;">combined household spend</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    per_user = []
-    for u in USERS:
-        items = [t for t in current if t["user"] == u]
-        spend = sum(t["amount"] for t in items)
-        by_card = {cid: sum(t["amount"] for t in items if t["card"] == cid) for cid in CARD_CONFIG}
-        per_user.append({"user": u, "spend": spend, "count": len(items), "by_card": by_card})
-
-    st.markdown('<div class="card">', unsafe_allow_html=True)
-    st.markdown('<div style="font-weight:600;font-size:15px;margin-bottom:8px;">Who spent what</div>', unsafe_allow_html=True)
-    if total_spend == 0:
-        st.caption("No transactions in the current periods yet.")
-    else:
-        slices = [{"label": p["user"], "value": p["spend"], "color": USER_COLORS[p["user"]]} for p in per_user]
-        donut_chart(slices, format_rm(total_spend), "total", key="donut_by_user")
-        for p in per_user:
-            pct = round((p["spend"] / total_spend) * 100) if total_spend else 0
-            breakdown = "  ·  ".join(f"{CARD_CONFIG[c].name} {format_rm(v)}" for c, v in p["by_card"].items())
-            st.markdown(
-                f"""
-                <div style="margin-top:10px;">
-                  <div style="display:flex;align-items:center;gap:8px;font-size:14px;">
-                    <span style="width:10px;height:10px;border-radius:50%;background:{USER_COLORS[p['user']]};display:inline-block;"></span>
-                    <span style="font-weight:600;">{p['user']}</span>
-                    <span style="margin-left:auto;font-family:monospace;">{format_rm(p['spend'])}</span>
-                  </div>
-                  <div style="height:6px;border-radius:999px;background:#EEF0F4;margin-top:5px;overflow:hidden;">
-                    <div style="height:100%;width:{pct}%;background:{USER_COLORS[p['user']]};border-radius:999px;"></div>
-                  </div>
-                  <div style="display:flex;justify-content:space-between;font-size:11px;color:#8A8F98;margin-top:3px;">
-                    <span>{p['count']} txn(s) · {pct}%</span><span>{breakdown}</span>
-                  </div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-    st.markdown("</div>", unsafe_allow_html=True)
-
-    a, b = per_user
-    diff = a["spend"] - b["spend"]
-    if abs(diff) < 0.01:
-        settle_text = "All square — both spent the same amount."
-    else:
-        frm, to, amt = (b["user"], a["user"], diff / 2) if diff > 0 else (a["user"], b["user"], -diff / 2)
-        settle_text = f"<b>{frm}</b> owes <b>{to}</b> <span style='font-family:monospace;font-weight:700;'>{format_rm(amt)}</span> to split the shared spend evenly."
-    st.markdown(
-        f"""
-        <div class="card">
-          <div style="font-weight:600;font-size:15px;margin-bottom:4px;">Settle up (50/50)</div>
-          <div style="font-size:13px;color:#555;">{settle_text}</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    recent = sorted(current, key=lambda t: t["date"], reverse=True)[:20]
-    st.markdown('<div class="card">', unsafe_allow_html=True)
-    st.markdown(f'<div style="font-weight:600;font-size:15px;margin-bottom:4px;">Recent activity <span style="color:#8A8F98;">({len(current)})</span></div>', unsafe_allow_html=True)
-    if not recent:
-        st.caption("Nothing to show yet.")
     else:
         for t in recent:
             weekend = is_weekend(t["date"])
